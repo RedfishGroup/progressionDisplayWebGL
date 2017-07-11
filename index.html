@@ -21,11 +21,11 @@
           var div = document.getElementById('staticDiv')
           var can1 = document.createElement('canvas')
           div.appendChild(can1)
-          window.layer = new staticProgression(can1,{width:300, height:300})
+          window.layer = new staticProgression(can1,{width:500, height:600})
           layer.setProgressionImage(ev[0])
           var jsn = ev[1]
           layer.setProgressionJson(jsn)
-          layer.time = jsn.UTC[0]// ev.json.startTime
+          layer.time = layer.startTime()// ev.json.startTime
           resolve()
         }).catch(reject)
       })
