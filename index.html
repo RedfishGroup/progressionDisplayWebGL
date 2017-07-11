@@ -7,6 +7,7 @@
   <script type="module">
 
     import staticProgression from "./src/progressionStatic.js"
+    import {loadProgressionJSON, loadProgressionImage} from "./src/misc.js"
 
     function setup(urlParams) {
       return new Promise(function(resolve, reject){
@@ -30,39 +31,6 @@
       })
     }
 
-    function loadProgressionImage(url) {
-      return new Promise(function(resolve, reject) {
-        var img = new Image()
-        img.crossOrigin = "Anonymous";
-        img.onload = function(ev){
-          resolve(this)
-        }
-        img.onerror = reject
-        img.src = url
-      })
-    }
-
-    function loadProgressionJSON(url) {
-      return new Promise( function(resolve, reject) {
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', url);
-        xhr.crossOrigin = "Anonymous";
-        xhr.onload = function() {
-          try{
-              var json = JSON.parse(xhr.responseText)
-          } catch(e){
-              reject(e)
-              return
-          }
-          resolve(json)
-        };
-        xhr.onerror = function () {
-            callback(xhr.response)
-        };
-        xhr.send();
-      })
-    }
-
     function tick() {
       layer.time += 1000000//layer.metaData.UTC[Math.floor(Math.random()*layer.metaData.UTC.length)]
       if(layer.time > layer.endTime() + 100000000){
@@ -72,9 +40,8 @@
       requestAnimationFrame( tick)
     }
 
-    setTimeout(function(){
-      setup().then(() => tick())
-    },20)
+
+    setup().then(() => tick())
 
 
   </script>
