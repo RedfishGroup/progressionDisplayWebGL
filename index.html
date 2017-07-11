@@ -1,0 +1,90 @@
+
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Progression Test</title>
+  <script type="module">
+
+    import staticProgression from "./src/progressionStatic.js"
+
+    function setup(urlParams) {
+      return new Promise(function(resolve, reject){
+        console.log("SETUP CALLED", urlParams)
+        // default progression
+        var jsonFile = "https://www.simtable.com/apps/fireProgression/output2017/AZPNF_000904_Goodwin.json"
+        var pngFile = "https://www.simtable.com/apps/fireProgression/output2017/AZPNF_000904_Goodwin.png"
+        var proms = [loadProgressionImage(pngFile), loadProgressionJSON(jsonFile)]
+        Promise.all(proms).then(function(ev){
+          console.log('done loading',ev)
+          var div = document.getElementById('staticDiv')
+          var can1 = document.createElement('canvas')
+          div.appendChild(can1)
+          window.layer = new staticProgression(can1,{width:300, height:300})
+          layer.setProgressionImage(ev[0])
+          var jsn = ev[1]
+          layer.setProgressionJson(jsn)
+          layer.time = jsn.UTC[0]// ev.json.startTime
+          resolve()
+        }).catch(reject)
+      })
+    }
+
+    function loadProgressionImage(url) {
+      return new Promise(function(resolve, reject) {
+        var img = new Image()
+        img.crossOrigin = "Anonymous";
+        img.onload = function(ev){
+          resolve(this)
+        }
+        img.onerror = reject
+        img.src = url
+      })
+    }
+
+    function loadProgressionJSON(url) {
+      return new Promise( function(resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url);
+        xhr.crossOrigin = "Anonymous";
+        xhr.onload = function() {
+          try{
+              var json = JSON.parse(xhr.responseText)
+          } catch(e){
+              reject(e)
+              return
+          }
+          resolve(json)
+        };
+        xhr.onerror = function () {
+            callback(xhr.response)
+        };
+        xhr.send();
+      })
+    }
+
+    function tick() {
+      layer.time += 1000000//layer.metaData.UTC[Math.floor(Math.random()*layer.metaData.UTC.length)]
+      if(layer.time > layer.endTime() + 100000000){
+        layer.time = layer.startTime()
+      }
+      layer.draw()
+      requestAnimationFrame( tick)
+    }
+
+    setTimeout(function(){
+      setup().then(() => tick())
+    },20)
+
+
+  </script>
+
+</head>
+<body>
+
+<div id="staticDiv"></div>
+<br>
+<div id="mapDiv2" style="width:400px; height:400px"></div>
+
+</body>
+</html>
