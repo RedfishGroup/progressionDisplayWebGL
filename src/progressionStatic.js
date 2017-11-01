@@ -148,7 +148,6 @@ export default class staticProgression {
   setProgressionJson (json) {
     this.metaData = json
     if( json.bounds) {
-      console.log('using bounds')
       var ul_ltln = [json.bounds.maxlat, json.bounds.minlon]
       var lr_ltln = [json.bounds.minlat, json.bounds.maxlon]
     } else if( json.worldfile4326) {
