@@ -1,4 +1,4 @@
-console.log('progression static')
+//console.log('progression static')
 
 import {vertexShader, fragmentShader} from "./progressionShaders.js"
 import {WebGLUtils} from "./webGLUtils.js"
@@ -215,7 +215,7 @@ export default class staticProgression {
     }
     //calculate frames per second
     if( !this.lastDrawTime || new Date().getTime() -  this.lastDrawTime > 3000){
-      console.log( 'progression fps = ', 1000 * this.lastDrawCount / (new Date().getTime() -  this.lastDrawTime) )
+      // console.log( 'progression fps = ', 1000 * this.lastDrawCount / (new Date().getTime() -  this.lastDrawTime) )
       this.lastDrawTime = new Date().getTime()
       this.lastDrawCount = 0
     }
