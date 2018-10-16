@@ -1,5 +1,5 @@
 
-export var vertexShader = `precision mediump float;
+export var vertexShader = `precision highp float;
   attribute vec4 vPosition;
   attribute vec2 a_texCoord;
   uniform mat4 projection;
@@ -10,7 +10,7 @@ export var vertexShader = `precision mediump float;
       gl_Position = projection * vPosition;
   }`
 
-export var fragmentShader = `precision mediump float;
+export var fragmentShader = `precision highp float;
   uniform sampler2D u_image;
   varying vec2 v_texCoord;
   uniform float timeSeconds;

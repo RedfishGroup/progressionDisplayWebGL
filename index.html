@@ -13,8 +13,8 @@
       return new Promise(function(resolve, reject){
         console.log("SETUP CALLED", urlParams)
         // default progression
-        var jsonFile = "https://www.simtable.com/apps/fireProgression/output2017/AZPNF_000904_Goodwin.json"
-        var pngFile = "https://www.simtable.com/apps/fireProgression/output2017/AZPNF_000904_Goodwin.png"
+        var jsonFile = "http://www.simtable.com/apps/fireProgression/output2013/NM_N6S_HJC4_Thompson_Ridge.json"
+        var pngFile = "http://www.simtable.com/apps/fireProgression/output2013/NM_N6S_HJC4_Thompson_Ridge.png"
         var proms = [loadProgressionImage(pngFile), loadProgressionJSON(jsonFile)]
         Promise.all(proms).then(function(ev){
           console.log('done loading',ev)
