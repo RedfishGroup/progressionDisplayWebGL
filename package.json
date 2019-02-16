@@ -1,1 +1,6 @@
-{}
+{
+ "repository": {
+    "type": "git",
+    "url": "git@github.com:RedfishGroup/progressionDisplayWebGL.git"
+  }
+}
