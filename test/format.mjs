@@ -138,6 +138,9 @@ const gradientJson = {
 check('endStyle defaults to jet and passes through',
   styleFromJson({}, MODE_SMOOTH).endStyle === 'jet' &&
   styleFromJson({}, MODE_SMOOTH, { endStyle: 'perimeter' }).endStyle === 'perimeter')
+check('endStyle never changes the lut reference (it gates the end frame, not the ramp)',
+  styleFromJson({}, MODE_SMOOTH).lut === styleFromJson({}, MODE_SMOOTH, { endStyle: 'perimeter' }).lut &&
+  styleFromJson(gradientJson, MODE_SMOOTH).lut === styleFromJson(gradientJson, MODE_SMOOTH, { endStyle: 'perimeter' }).lut)
 
 /* ========================================================= acresFromJson */
 console.log('\nacres.js — interpolation, clamps, and the legacy regression')

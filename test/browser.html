@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>browser acceptance — ProgressionDisplayWebGL</title>
+  <style>
+    body { font: 13px/1.5 ui-monospace, monospace; margin: 1.5rem; }
+    #banner { font-size: 1.1rem; font-weight: bold; }
+    .ok { color: #16803c; } .fail { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div id="banner">running…</div>
+  <pre id="log"></pre>
+  <canvas id="gl" style="display:none"></canvas>
+
+  <script type="module">
+    /**
+     * The package's GL acceptance page (the gl-goldens.html analogue):
+     * GPU-vs-painter pixel parity on the committed sample raster, the
+     * single-upload scrub invariant, RendererUnavailable on an oversized
+     * raster, and both end-frame styles. Serve the repo root over HTTP and
+     * open /test/browser.html; the banner and document.title carry the
+     * verdict (headless runs grep the DOM for it).
+     */
+    import {
+      ProgressionRenderer, RendererUnavailable,
+      rasterFromImage, windowFromJson, styleFromJson,
+      paintProgression, endFrameLut, MODE_SMOOTH,
+    } from '../src/index.js'
+    import { fetchProgression } from '../src/loaders/fetchProgression.js'
+    import { projectionMatrixFromViewportCorners } from '../src/adapters/matrix.js'
+
+    const log = document.getElementById('log')
+    const banner = document.getElementById('banner')
+    let passed = 0
+    let failed = 0
+    const check = (name, cond, detail) => {
+      if (cond) { passed++; log.textContent += `  ok   ${name}\n` }
+      else { failed++; log.textContent += `  FAIL ${name}${detail ? ' — ' + detail : ''}\n` }
+    }
+
+    try {
+      const { json, image } = await fetchProgression('../sample/sample')
+      const raster = rasterFromImage(image)
+      const win = windowFromJson(json)
+      const { width: W, height: H } = raster
+
+      /* ---- GL renderer at raster resolution, identity placement ---- */
+      const canvas = document.getElementById('gl')
+      const r = new ProgressionRenderer(canvas)
+      r.setRaster(raster).setWindow(win).setEndLut(endFrameLut())
+      r.setViewport(W, H, 1)
+      r.setProjection(projectionMatrixFromViewportCorners({ x: 0, y: 0 }, { x: W, y: H }, W, H))
+
+      const readback = () => {
+        const px = new Uint8Array(W * H * 4)
+        r.gl.readPixels(0, 0, W, H, r.gl.RGBA, r.gl.UNSIGNED_BYTE, px)
+        return px
+      }
+
+      /**
+       * Compare a painter frame with a GL readback. The blending contract
+       * (README "The data contract"): SRC_ALPHA/ONE_MINUS_SRC_ALPHA over a
+       * transparent clear, so the framebuffer holds rgb·a and alpha a².
+       * The painter is non-premultiplied, so expectations are derived from
+       * it. readPixels rows start at the BOTTOM (GL origin), painter rows at
+       * the top — compare painter row y against GL row H-1-y.
+       * Tolerance ±8/channel absorbs fp32-vs-fp64 LUT-index edge rounding
+       * (adjacent LUT entries differ by a few units at most).
+       */
+      function parity(name, imgData, glPx) {
+        let worst = 0
+        let off = 0
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const p = (y * W + x) * 4
+            const g = ((H - 1 - y) * W + x) * 4
+            const a = imgData.data[p + 3] / 255
+            const want = [imgData.data[p] * a, imgData.data[p + 1] * a,
+                          imgData.data[p + 2] * a, a * a * 255]
+            for (let c = 0; c < 4; c++) {
+              const d = Math.abs(glPx[g + c] - want[c])
+              if (d > worst) worst = d
+              if (d > 8) off++
+            }
+          }
+        }
+        check(`parity/${name}: every channel within ±8 (worst ${worst.toFixed(1)})`, off === 0,
+          `${off} channels off`)
+      }
+
+      /* ---- 1. Smooth, mid-run ---- */
+      const style = styleFromJson(json, MODE_SMOOTH)
+      const tMid = win.startMs + 0.55 * (win.endMs - win.startMs)
+      r.setStyle(style).setTime(tMid).draw()
+      parity('smooth mid-run', paintProgression(raster, win, tMid, style.lut), readback())
+
+      /* ---- 2. Jet end frame ---- */
+      r.setTime(win.endMs).draw()
+      parity('jet end frame', paintProgression(raster, win, win.endMs, style.lut), readback())
+
+      /* ---- 3. Perimeter end frame ---- */
+      const perim = styleFromJson(json, MODE_SMOOTH, { endStyle: 'perimeter' })
+      r.setStyle(perim).setTime(win.endMs).draw()
+      parity('perimeter end frame',
+        paintProgression(raster, win, win.endMs, perim.lut,
+          { endStyle: 'perimeter', bands: perim.bands }),
+        readback())
+      check('perimeter and jet styles resolve to the same lut reference (memoized per mode)',
+        perim.lut === style.lut)
+
+      /* ---- 4. The scrub invariant ---- */
+      const before = r.uploads
+      for (let i = 0; i <= 50; i++) {
+        r.setStyle(style).setTime(win.startMs + (i / 50) * (win.endMs - win.startMs)).draw()
+      }
+      check(`scrubbing 51 frames re-uploads zero textures (uploads stays ${before})`,
+        r.uploads === before && before === 1)
+
+      /* ---- 5. RendererUnavailable on an oversized raster ---- */
+      {
+        const c2 = document.createElement('canvas')
+        const r2 = new ProgressionRenderer(c2)
+        const max = r2.gl.getParameter(r2.gl.MAX_TEXTURE_SIZE)
+        let threw = null
+        try { r2.setRaster({ bytes: new Uint8Array(4), width: max + 1, height: 1 }) }
+        catch (e) { threw = e }
+        check(`an oversized raster (${max + 1} px) throws RendererUnavailable`,
+          threw instanceof RendererUnavailable, String(threw))
+        r2.destroy()
+      }
+
+      r.destroy()
+    } catch (err) {
+      failed++
+      log.textContent += `\nUNCAUGHT: ${err.stack ?? err}\n`
+    }
+
+    const verdict = `${failed === 0 ? 'PASS' : 'FAIL'} — ${passed} passed, ${failed} failed`
+    banner.textContent = verdict
+    banner.className = failed === 0 ? 'ok' : 'fail'
+    document.title = verdict
+  </script>
+</body>
+</html>

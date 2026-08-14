@@ -46,9 +46,15 @@ export function styleFromJson(json, mode = MODE_SMOOTH, opts = {}) {
     const colors = fromGradient
       ? { ramp: FIRE.ramp, bands, publishesGradient: true }  // ramp unreachable: gradient wins
       : source
+    // The LUT depends on (source, mode) only — endStyle gates the shader's
+    // final-frame branch, not the ramp. Share the array across endStyles so
+    // toggling the end style never changes the lut reference (which would
+    // trigger a pointless LUT texture re-upload in setStyle).
+    const lutKey = `lut|${mode}`
+    if (!byKey.has(lutKey)) byKey.set(lutKey, lutFor(colors, mode))
     byKey.set(key, {
       mode,
-      lut: lutFor(colors, mode),
+      lut: byKey.get(lutKey),
       bands,
       isGradient: fromGradient || source.publishesGradient,
       endStyle,
