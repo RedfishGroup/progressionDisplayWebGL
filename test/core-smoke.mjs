@@ -211,6 +211,16 @@ console.log('\nadapters/leaflet.js — placement geometry')
   check('off-screen bounds stay finite (GPU clips, we do not special-case)',
     Array.from(m).every(Number.isFinite))
 }
+{
+  // ONE placement function for every adapter: the leaflet name and the OL2
+  // bridge must both resolve to the shared implementation in matrix.js, so
+  // the orientation convention cannot fork per map framework.
+  const { projectionMatrixFromViewportCorners } = await import('../src/adapters/matrix.js')
+  const ol2 = await import('../src/adapters/openlayers2.js')
+  check('adapters share one matrix implementation',
+    projectionMatrix === projectionMatrixFromViewportCorners &&
+    ol2.projectionMatrixFromViewportCorners === projectionMatrixFromViewportCorners)
+}
 
 /* ======================================================== recency window */
 console.log('\nshaders.js — the recency window')

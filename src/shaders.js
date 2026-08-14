@@ -232,7 +232,9 @@ export const UNIFORM_NAMES = [
 
 /**
  * The unit quad: positions (±1) interleaved with texture coordinates.
- * v = 0 sits at the quad's TOP — the y-flip lives here (D8).
+ * v = 0 sits at the quad's TOP — the y-flip lives here, and ONLY here
+ * (README "Raster orientation"): raster row 0 (north) binds to the top of
+ * the quad, and the projection matrix's vertical scale stays positive.
  */
 export const QUAD = new Float32Array([
   -1, -1, 0, 1,

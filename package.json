@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.js",
     "./adapters/leaflet": "./src/adapters/leaflet.js",
+    "./adapters/openlayers2": "./src/adapters/openlayers2.js",
     "./fallback": "./src/fallback/canvasPainter.js"
   },
   "files": [

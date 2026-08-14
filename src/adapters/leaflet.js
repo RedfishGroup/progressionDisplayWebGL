@@ -24,45 +24,18 @@
  */
 
 import { ProgressionRenderer } from '../renderer.js'
+import { projectionMatrixFromViewportCorners } from './matrix.js'
 
 /**
- * Affine placement of the shader's fixed ±1 quad onto the raster's on-screen
- * rectangle, as a column-major 4×4 for `uniformMatrix4fv(..., false, m)`.
- *
- * The vertical scale is POSITIVE. AnyHazard's helper returns a negative one,
- * because its `phei = ul.y - lr.y` is negative in a y-down coordinate space —
- * a y-flip hidden in the sign, paired with un-flipped texture coordinates.
- * We flip in the texcoords instead (D8), so this matrix means placement only.
- *
- * Inputs are CONTAINER pixels (CSS px), matching latLngToContainerPoint,
- * because the canvas is pinned to the viewport origin.
- *
- * Note this stretches a raster uniform in lat/lon linearly between two
- * Mercator-projected corners — the identical approximation L.ImageOverlay
- * already makes, and well under a pixel at fire-sized extents.
- *
- * @param {{x: number, y: number}} nw - north-west corner, container px
- * @param {{x: number, y: number}} se - south-east corner, container px
- * @param {number} cssW - viewport width in CSS px
- * @param {number} cssH - viewport height in CSS px
- * @returns {Float32Array} 16 values, column-major
+ * The pure placement geometry, re-exported under its historical name —
+ * Studio's tests and existing call sites import `projectionMatrix` from this
+ * module. The implementation (and the full convention notes — POSITIVE
+ * vertical scale, the flip lives in the texcoords) moved to
+ * adapters/matrix.js so both map adapters share one function; see also
+ * README "Raster orientation". Inputs are CONTAINER pixels (CSS px),
+ * matching latLngToContainerPoint: (nw, se, cssW, cssH).
  */
-export function projectionMatrix(nw, se, cssW, cssH) {
-  const x0 = (2 * nw.x) / cssW - 1
-  const x1 = (2 * se.x) / cssW - 1
-  const y0 = 1 - (2 * nw.y) / cssH
-  const y1 = 1 - (2 * se.y) / cssH
-  const sx = (x1 - x0) / 2
-  const sy = (y0 - y1) / 2
-  const tx = (x0 + x1) / 2
-  const ty = (y0 + y1) / 2
-  return new Float32Array([
-    sx, 0, 0, 0,
-    0, sy, 0, 0,
-    0, 0, 1, 0,
-    tx, ty, 0, 1
-  ])
-}
+export const projectionMatrix = projectionMatrixFromViewportCorners
 
 let LayerClass = null
 

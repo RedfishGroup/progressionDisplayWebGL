@@ -9,6 +9,7 @@
 
 import * as pkg from 'ProgressionDisplayWebGL'
 import * as leafletAdapter from 'ProgressionDisplayWebGL/adapters/leaflet'
+import * as ol2Adapter from 'ProgressionDisplayWebGL/adapters/openlayers2'
 import * as fallback from 'ProgressionDisplayWebGL/fallback'
 
 let passed = 0
@@ -62,6 +63,13 @@ check('subpath exports createProgressionLayer',
   typeof leafletAdapter.createProgressionLayer === 'function')
 check('adapter imported without a Leaflet global present (late binding holds)',
   typeof globalThis.L === 'undefined')
+
+console.log('\npackage exports — "./adapters/openlayers2" subpath (deferred bridge)')
+
+check('subpath resolves and exports the shared matrix helper',
+  typeof ol2Adapter.projectionMatrixFromViewportCorners === 'function')
+check('both adapters expose the same placement function',
+  ol2Adapter.projectionMatrixFromViewportCorners === leafletAdapter.projectionMatrix)
 
 console.log('\npackage exports — "./fallback" subpath')
 

@@ -1,151 +1,233 @@
-# progression-render — porting notes
+# ProgressionDisplayWebGL
 
-This directory is the progression renderer. It is written to be lifted out of
-Progression Studio and dropped into AnyHazard or `viewerTemplate/` with the
-host supplying only three things: a canvas, a clock, and a placement.
+WebGL renderer for incident-progression (time-of-arrival) rasters, plus the
+format helpers and map-framework adapters every host used to reimplement.
+This repo is the shared core of the progression-viewer lineage: the original
+renderer here was forked into AnyHazard, rewritten inside Progression Studio,
+and that rewrite has now landed back as this package. The consuming apps —
+Progression Studio, the published viewerTemplate, and AnyHazard — import it
+rather than carrying their own copies.
 
-**It imports nothing from the rest of Studio and touches no globals.** That is
-a rule, not an accident — check it before you add an import:
+Plain ESM, zero runtime dependencies, no build step. Works from a bundler or
+directly via `<script type="module">`.
 
 ```
-shaders.js          GLSL strings + the recency window. No side effects.
-colors.js           The scheme table (two colour roles) and LUT builders.
-renderer.js         ProgressionRenderer: gl, program, textures, uniforms.
-adapters/leaflet.js Placement on a Leaflet map + the pure projectionMatrix.
+import { ProgressionRenderer, RendererUnavailable,
+         windowFromJson, boundsFromJson, styleFromJson,
+         rasterFromImage, acresFromJson,
+         paintProgression, endFrameLut, isFinalFrame } from 'ProgressionDisplayWebGL'
+import { createProgressionLayer, projectionMatrix } from 'ProgressionDisplayWebGL/adapters/leaflet'
+import { paintProgression } from 'ProgressionDisplayWebGL/fallback'
 ```
-
-Everything Studio-specific lives one level up in
-`src/map/glRasterOverlay.js` — draft/full opacity, the acres readout, the
-canvas fallback. That file is the example of what a host adapter looks like,
-not part of the core.
 
 ## The three things a host supplies
 
-**1. A canvas.** `new ProgressionRenderer(canvas)`. It throws
-`RendererUnavailable` when there is no context, no `highp` in fragment
-shaders, or (at `setRaster`) a raster over `MAX_TEXTURE_SIZE`. Treat that as
-"use whatever you had before", never as a crash. The renderer never renames
-your canvas — the class this descends from hardcodes
-`canvas.id = 'progression-canvas'`, which collides with its own caller in
-`progressionLayer.js`.
+The renderer is deliberately blind to everything app-shaped. A host provides:
 
-**2. A clock, pushed in.** `renderer.setTime(ms)`. The AnyHazard fork reads the
-global `st.clock.UTC` inside `getAcres()`, `timeAsRatio()` and `draw()`; that
-is ergonomic for one app and fatal for a module three apps import. Porting it
-back means a ~3-line adapter that subscribes to `st.clock` and calls
-`setTime()` — every existing call site keeps its behaviour.
+1. **A canvas.** `new ProgressionRenderer(canvas)`. It throws
+   `RendererUnavailable` when there is no WebGL context, no true `highp` in
+   fragment shaders, on shader compile/link failure, or (at `setRaster`) for
+   a raster over `MAX_TEXTURE_SIZE`. Treat that as "use the fallback painter",
+   never as a crash. The renderer never renames or restyles your canvas
+   beyond its backing-store size.
+2. **A clock, pushed in.** `renderer.setTime(ms)` with absolute epoch ms.
+   There is no global clock, no internal rAF loop, no player — hosts own
+   playback and push time down.
+3. **A placement.** `setViewport(cssW, cssH, devicePixelRatio)` +
+   `setProjection(matrix16)`. For Leaflet hosts `adapters/leaflet` does both;
+   the pure `projectionMatrixFromViewportCorners(ul, lr, cssW, cssH)`
+   (`adapters/matrix.js`) is shared by all adapters and testable in node.
 
-**3. A placement.** `setViewport(cssW, cssH, dpr)` +
-`setProjection(matrix16)`. For Leaflet hosts `adapters/leaflet.js` does this
-already; `projectionMatrix(nw, se, cssW, cssH)` is pure and testable without a
-browser.
+## Quick start
 
-## Two conventions that will bite you
+```js
+import {
+  ProgressionRenderer, rasterFromImage, windowFromJson, styleFromJson,
+  endFrameLut, MODE_SMOOTH,
+} from 'ProgressionDisplayWebGL'
 
-**The y-flip lives in the texture coordinates.** `v = 0` is the quad's top,
-where raster row 0 (north) belongs, so the projection matrix's vertical scale
-is **positive** and means placement only.
+const json = await (await fetch(base + '.json')).json()
+const img = new Image()
+img.crossOrigin = 'anonymous'          // the PNG bytes must survive untouched
+img.src = base + '.png'
+await img.decode()
 
-AnyHazard's shipped pairing is the mirror image: un-flipped texcoords with a
-negative `ry` hidden inside `getProjectionMatrix`'s `phei = ul.y - lr.y`. Both
-are self-consistent. **Mixing them renders the map upside down.** If you take
-this renderer but keep `st.leafletHelpers.getProjectionMatrix`, you must flip
-one of them.
+const r = new ProgressionRenderer(canvas)   // may throw RendererUnavailable
+r.setRaster(rasterFromImage(img))           // uploads once; scrubbing never re-uploads
+r.setWindow(windowFromJson(json))           // the union contract, see below
+r.setEndLut(endFrameLut())                  // only the 'jet' end style needs this
+r.setStyle(styleFromJson(json, MODE_SMOOTH))
+r.setViewport(cssW, cssH, devicePixelRatio)
+r.setProjection(matrix)                     // from an adapter, or your own placement
 
-**Colour has two roles per scheme, not one.** `ramp` (3 stops) is Smooth's
-no-gradient default; `bands` (4 RGBA slots) drives Bands, drives Recency
-always, drives Smooth whenever a gradient exists, and is what publishes as
-`json.gradient`. They are not interchangeable — a continuous ramp and four
-discrete rings encode different things.
+r.setTime(timeMs)
+r.draw()
+```
 
-## `json.gradient` drives every look
+## Raster orientation
 
-**`lutFor(colors, mode)`** is the one place colour is resolved:
+**The progression PNG is human-readable: row 0 is north.** That holds at
+every stage — encoder output, the published file, the bytes handed to
+`setRaster`, texture memory. Nothing in this package (and nothing in a host)
+may flip rows on the way through.
 
-- **A published gradient wins.** Any scheme carrying four slots — every preset
-  but Fire, and every custom ramp — feeds all three looks through
-  `lutFromBands()`: an evenly-spaced ramp **in time order**, so 0 % is
-  `color4` (the interior, i.e. the oldest burn), then `color3`, `color2`, and
-  100 % is `color1` (the edge band, i.e. the newest).
-- **Recency always reads the slots**, gradient or not, so with no gradient it
-  draws the Fire *bands* — the same fallback Bands uses.
-- **Smooth otherwise keeps its own default.** Fire's 3-stop ramp and the 0.55
-  breakpoint are what Studio has always drawn for arrival.
+The renderer implements the invariant in exactly one place: **the y-flip
+lives in the texture coordinates.** The `QUAD` constant carries `v = 0` at
+the quad's *top*, which is where raster row 0 (north) belongs. Consequently
+the projection matrix's **vertical scale is positive** and means placement
+only (`adapters/matrix.js`).
 
-Where each look reads that ramp:
+The legacy pairing — shipped in AnyHazard's `getProjectionMatrix` and the
+viewerTemplate's `fireOverlayGL.js` — is the mirror image: un-flipped
+texcoords with a negative vertical scale hidden in `phei = ul.y - lr.y`.
+Both pairings are self-consistent. **Mixing them renders the map upside
+down.** Hosts migrating to this package must take the package's matrices
+(or the shared matrix helper) and must NOT feed a legacy-convention matrix
+into this renderer. During migration those legacy sites still exist —
+Simtable2's `initLeaflet.js` and the template's `fireOverlayGL.js` — and are
+retired by their respective integration steps.
 
-| Look | Reads the ramp over | Ends |
-|---|---|---|
-| Smooth | arrival time across the whole run | earliest = `color4`, latest = `color1` |
-| Bands | not the ramp — the four slots as discrete rings | `color4` interior, `color1` outermost |
-| Recency | the fade window only (12 % of the run, floored at the legacy 5222 s) | `color1` at the burning edge; everything older clamps to `color4` |
+Everything that touches placement or row order cites this section:
+`QUAD` (shaders.js), `adapters/matrix.js`, `format/raster.js` (no flip on
+decode), `fallback/canvasPainter.js` (no flip on paint), and the
+`orientation:`-prefixed tests in `test/core-smoke.mjs` and
+`test/painter.mjs`. A sign regression is an orientation failure and the
+test names say so.
 
-**The final frame is shared.** Once `isFinalFrame(elapsed, span)` is true, all
-three looks draw the same arrival map through a second LUT (`endFrameLut()`,
-the built-in Jet ramp) uploaded once via `setEndLut`. It replaces the shipped
-HSV sweep, whose hue wrapped so two very different times could share a colour.
-A host that adopts this core gets that end frame too — and any host with its
-own canvas path must switch at the same boundary, which is why `isFinalFrame`
-is exported rather than inlined in the shader alone.
+## The data contract
 
-**THE ORIENTATION RULE.** Time runs left → right and top → bottom, earliest
-first, on every surface — pixels, legend bars, gallery strips, editor rows.
-The LUT is indexed by time (0 = earliest), so the shader needs no branch on
-where the colours came from: Smooth samples `arrival/span` and Recency samples
-`1 - age`, both against the same texture.
+- **Raster in:** `{bytes, width, height}`, RGBA, **base-256** seconds since
+  start packed into RGB (`R·65536 + G·256 + B`), white = no data (the shader
+  treats `a < 255 || r ≥ 255` as no-data), row 0 = north. `rasterFromImage`
+  produces exactly this from a decoded PNG.
+- **Window in:** `setWindow({startMs, endMs})`, epoch ms. Deriving it from a
+  JSON is `windowFromJson`'s job — **the union contract**: explicit
+  `startTime`/`endTime` when both are finite (they may carry the publisher's
+  timezone adjustment, so they are the authority), else the `UTC` array's
+  endpoints, else it throws. It never returns NaN: the NaN path is the
+  legacy frozen-fully-burned-fire bug.
+- **Style in:** `styleFromJson(json, mode, {endStyle})` resolves, in order:
+  explicit `json.gradient` (4 slots, edge → interior, drives every look) →
+  `json.flood` (the built-in Water scheme) → Fire defaults. Results are
+  memoized per source so LUT references stay stable — `setStyle` re-uploads
+  the LUT texture only when the reference changes.
+- **Time base:** plain seconds under `highp` — fp32 is integer-exact to
+  2²⁴, precisely the encoding's ceiling (~194 days). The construction check
+  refuses to run without real `highp` rather than render quietly-wrong times
+  (the legacy `mediump` copies survive only because desktop drivers promote
+  to fp32).
+- **Blending:** `SRC_ALPHA / ONE_MINUS_SRC_ALPHA` over a transparent clear,
+  context created with `premultipliedAlpha: false`. When comparing readback
+  pixels, the framebuffer holds `src.rgb × src.a` (Smooth and the jet end
+  frame write alpha 1.0 and read back untouched; Bands/Recency/perimeter do
+  not).
+- **Recency window:** `recencyFadeSeconds(spanS) = max(5222, 0.12·spanS)` —
+  the legacy viewer's fixed 5222 s constant survives only as the floor.
+- **Band geometry** is a fraction of the *texture* (`percentWide × 0.005`),
+  so ring width scales with the raster, and below roughly 256² the inner
+  rings are sub-texel and collapse — preserved deliberately so previews
+  match what ships.
 
-`timeOrder()` is the ONLY place the flip happens. Storage stays edge →
-interior because that is the published `json.gradient.color1..4` order; if you
-add a surface that draws slots for a human, reverse it through that helper
-rather than inline, or the app grows a second opinion about which end is the
-start of the fire.
+## Renderer API
 
-> **The published viewer can gain scheme colours with zero protocol change.**
-> Today's files already carry `json.gradient`. Feed those four slots through
-> `lutFromBands`, and the recency look renders in the incident's colours
-> instead of the hardcoded orange — no new JSON field, no re-publish, no
-> coordination with the encoder. That is round-1 note 2, and Studio now proves
-> the mechanism rather than merely reserving it.
+| Member | Behavior |
+|---|---|
+| `new ProgressionRenderer(canvas)` | Context + `highp` check + program; throws `RendererUnavailable` on any of them. |
+| `setRaster({bytes,width,height})` | Uploads the arrival texture once; throws `RendererUnavailable` over `MAX_TEXTURE_SIZE`. `renderer.uploads` counts uploads — scrubbing must never increment it. |
+| `setWindow({startMs,endMs})` / `setTime(ms)` | Window and clock, both pushed in; elapsed/span computed at draw. |
+| `setStyle({mode, lut, bands, isGradient, endStyle?, isWater?})` | Stores style; re-uploads the 256×1 LUT only when `lut`'s reference changed. `styleFromJson` produces this shape. |
+| `setEndLut(lut)` | The final-frame ramp (`endFrameLut()`), uploaded once; only the `'jet'` end style reads it. |
+| `setViewport(cssW, cssH, dpr)` | Backing store in device pixels; CSS size and the projection stay in CSS px. |
+| `setProjection(m)` | Column-major 4×4 from the adapter; positive vertical scale (see orientation). |
+| `draw()` | Draws nothing unless raster + projection + style are all present — no identity-matrix fallback stretching the raster across the viewport. |
+| `destroy()` | Deletes GL resources and force-releases the context (`WEBGL_lose_context`). |
 
-One judgement call worth knowing: `lutFromBands` **drops per-slot alpha**.
-Alpha is a Bands affordance — each ring is a flat fill that can be
-individually see-through — and blending it into a continuous ramp would make
-the fade read as a transparency gradient rather than a colour one.
+## Color: two roles, one resolver, one flip
 
-## What the port fixes on arrival
+Each scheme in `SCHEMES` carries a 3-stop `ramp` (Smooth's no-gradient
+default, 0.55 breakpoint) and 4 RGBA `bands` slots (drives Bands, publishes
+as `json.gradient`, feeds `lutFromBands`). `lutFor(colors, mode)` is the one
+place color resolves: a published gradient wins for every look; Recency
+always reads the slots; Smooth otherwise keeps its ramp. LUTs are indexed by
+**time** (0 = earliest); `timeOrder()` is the only place the stored
+edge→interior order flips to time order — never inline that reversal.
+`lutFromBands` deliberately drops per-slot alpha (alpha is a Bands
+affordance; in a continuous ramp it would read as a transparency gradient).
 
-Carrying this core across also carries four fixes the shipped copies lack:
+## The end frame
 
-1. **The base-255 decode.** `color2number` computes `R·65025 + G·255 + B`
-   against an encoder packing `R·65536 + G·256 + B`, so arrival times read
-   ~0.78 % early — ~22 min on a 2-day fire, ~67 min on a 6-day one.
-2. **`highp` everywhere**, which retires the viewer's ÷256 time hack: fp32's
-   mantissa is exact to 2²⁴, precisely the encoding's ceiling. (`mediump`
-   never helped — true fp16 is exact only to 2048, so the ÷256 values
-   overflowed it too; it worked because desktop drivers promote to fp32.)
-3. **The quad uploads once.** Both shipped copies call
-   `bufferData(flatten(this.points))` every frame on a constant quad, through
-   a fresh allocation each time.
-4. **An inclusive arrival gate.** `diff > 0.0` leaves the last-arriving pixel
-   transparent at the final frame.
+Once `isFinalFrame(elapsedS, spanS)` is true, every mode converges on one
+completion state, in one of two host-selectable styles
+(`setStyle({endStyle})`, enumerated in `END_FRAME_STYLES`):
 
-## Contract notes
+- **`'jet'`** (default): the arrival-time map through the end LUT — replaces
+  the legacy HSV sweep whose hue wrapped so two very different times could
+  share a color. Needs `setEndLut(endFrameLut())`.
+- **`'perimeter'`**: the quieter option — the selected ramp's interior slot
+  color over the whole burn, opaque at the fire's final data edge. The
+  border keys on **no-data adjacency** (not arrival ordering, which would
+  smear around the last-arriving pixels). Needs no end LUT.
 
-- **Raster in:** `{bytes, width, height}`, RGBA, base-256 seconds since start,
-  white = no data, **row 0 = north**. In Studio that is `result.rgba`
-  unchanged — the exact bytes that publish as the PNG.
-- **Window in:** `setWindow({startMs, endMs})`. Reading it from a progression
-  JSON is the host's job, and the contract is a union: use explicit
-  `startTime`/`endTime` when present, else derive from `UTC[0]` and
-  `UTC[n-1]`. AnyHazard's player reads the explicit fields and derives
-  nothing, so a JSON without them renders a fully-burned, frozen fire.
-- **Recency window:** `recencyFadeSeconds(spanSeconds)` — floored at the
-  legacy 5222 s, scaled to a fraction of the run above it. The legacy fixed
-  constant is 3 % of a two-day span and renders such a fire flat.
-- **Blending:** `SRC_ALPHA / ONE_MINUS_SRC_ALPHA` over a transparent clear, so
-  the framebuffer holds `src.rgb × src.a`. Matters when you compare pixels:
-  Smooth writes alpha 1.0 and reads back untouched, Bands (0.7) and Recency
-  (0.85) do not.
-- **Band geometry** is a fraction of the *texture* (`percentWide × 0.005`), so
-  below roughly 256² the inner two rings are sub-texel and collapse into the
-  interior. Preserved deliberately so Studio previews what AnyHazard draws.
+`isFinalFrame` is exported so host-side legends and canvas paths switch at
+the identical boundary.
+
+## The fallback painter
+
+`paintProgression(raster, window, timeMs, lut, {endStyle, bands})`
+(`./fallback`) is the CPU twin: Smooth-look semantics, both end styles, same
+inclusive gate, same `round(u·255)` LUT indexing, no row flip. It is the
+standard fallback when construction throws `RendererUnavailable`, and the
+parity reference the GL renderer is tested against — the two must change
+together. Placement, opacity policy, and fallback orchestration stay
+host-side.
+
+## Adapters
+
+- **`adapters/leaflet`** — `createProgressionLayer(bounds, options)`: a
+  viewport-pinned canvas as an `L.Layer` (bounds-anchored canvases break at
+  deep zoom; the GPU clips instead), single-path event teardown, zoom
+  animation, `RendererUnavailable` surfaced through `options.onUnavailable`.
+  Touches the Leaflet global only at first use, so importing it in node is
+  safe. Also re-exports the pure `projectionMatrix(nw, se, cssW, cssH)`.
+- **`adapters/openlayers2`** — a deferred bridge: today only the shared
+  matrix helper. The layer shell gets built at the viewerTemplate
+  integration step *only if* the template is still on OpenLayers by then
+  (a Leaflet migration is expected; see the TODO in the module).
+- **`adapters/matrix.js`** — `projectionMatrixFromViewportCorners`, the one
+  placement function both adapters share.
+
+## What stays in hosts
+
+Play loops and clocks, progression list UIs, Firebase/network fetching policy,
+Technosylva/ArcGrid ingestion (re-encode to the raster contract and feed
+`setRaster`), `.pgw` world-file parsing (legacy path; `boundsFromJson`
+covers the JSON-carried shapes), acres *display* (`acresFromJson` does the
+arithmetic), opacity policy, and fallback orchestration.
+
+## What this core fixed vs the shipped copies
+
+| Fix | Shipped behavior |
+|---|---|
+| Base-256 decode | `R·65025 + G·255 + B` read arrival ~0.78 % early (~22 min on a 2-day fire). |
+| `highp` + construction check | `mediump` + (in the viewer) a ÷256 time hack; worked only where drivers promote to fp32. |
+| Quad uploads once | `bufferData(flatten(quad))` every frame, fresh allocation each time. |
+| Inclusive arrival gate | `diff > 0.0` left the last-arriving pixel transparent at the final frame. |
+| DPR-aware viewport | 1× on Retina. |
+| Non-wrapping end frame | HSV hue wheel wrapped ~every 20 h of arrival spread. |
+| Scaled recency window | Fixed 5222 s ≈ 3 % of a two-day run — a flat, unreadable fade. |
+
+## Tests
+
+`npm test` runs the node suites (no dev dependencies): core smoke
+(color-table walls, orientation/matrix convention, shader-source
+invariants, decode arithmetic), format helpers, the exports map (resolved
+through package self-reference), and the fallback painter (exact pixels,
+both end styles). GL-vs-painter pixel parity runs in the browser page
+`test/browser.html`.
+
+## legacy/
+
+The pre-rebuild renderer, parked for reference while the hosts migrate
+(AnyHazard's `Simtable2/src/UI/webgl/` is a line-for-line fork of it).
+Nothing imports it except the interim demo; it is deleted once all hosts
+are on the new core.
