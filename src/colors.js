@@ -18,8 +18,11 @@
  *      literally what AnyHazard draws. That is what makes Bands mode an
  *      honest preview for every scheme.
  *
- * No imports from the rest of Studio; no globals. Lifts out as-is.
+ * No imports beyond the sibling shaders.js (the mode constants — one source
+ * of truth now that the two files ship in the same package); no globals.
  */
+
+import { MODE_RECENCY } from './shaders.js'
 
 /**
  * @typedef {Object} Scheme
@@ -222,8 +225,7 @@ export function timeOrder(bands) {
  * @param {number} [mode] - MODE_SMOOTH | MODE_BANDS | MODE_RECENCY
  */
 export function lutFor(colors, mode) {
-  const RECENCY = 2
-  if (mode === RECENCY || colors.publishesGradient) return lutFromBands(colors.bands)
+  if (mode === MODE_RECENCY || colors.publishesGradient) return lutFromBands(colors.bands)
   return rampLutBytes(colors.ramp)
 }
 

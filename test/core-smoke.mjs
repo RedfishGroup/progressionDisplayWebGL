@@ -12,6 +12,7 @@
  * Actual pixels are the job of test/browser.html, which needs a browser.
  */
 
+import { readFileSync } from 'node:fs'
 import { SCHEMES, LEGACY_GRADIENTS, rampLutBytes, lutFromBands, lutFor, timeOrder } from '../src/colors.js'
 import { projectionMatrix } from '../src/adapters/leaflet.js'
 import {
@@ -149,6 +150,19 @@ check('every scheme has 3 ramp stops and 4 band slots',
   check('a custom ramp drives the looks from its OWN slots, not its source preset',
     cl[255 * 4] === 255 && cl[255 * 4 + 1] === 0 && cl[2] === 51,
     `first=${cl[0]},${cl[1]},${cl[2]} last=${cl[255 * 4]},${cl[255 * 4 + 1]},${cl[255 * 4 + 2]}`)
+}
+
+/* ---- one source of truth for the mode constants ---- */
+{
+  // The Studio copy hardcoded a local RECENCY = 2 to keep colors.js
+  // import-free; in this package the two files ship together, so the mode
+  // constants live only in shaders.js. Behaviorally covered by the
+  // Recency/* checks above (which pass MODE_RECENCY from shaders.js); this
+  // pins the source so the duplicate constant cannot quietly return.
+  const src = readFileSync(new URL('../src/colors.js', import.meta.url), 'utf8')
+  check('colors.js imports MODE_RECENCY from shaders.js (no local mode constant)',
+    /import\s*\{[^}]*MODE_RECENCY[^}]*\}\s*from\s*'\.\/shaders\.js'/.test(src) &&
+    !/const\s+RECENCY\s*=/.test(src))
 }
 
 /* ====================================================== projection matrix */
