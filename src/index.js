@@ -24,6 +24,8 @@ export {
   QUAD,
 } from './shaders.js'
 
+export { paintProgression } from './fallback/canvasPainter.js'
+
 export { windowFromJson } from './format/window.js'
 export { boundsFromJson } from './format/bounds.js'
 export { styleFromJson } from './format/style.js'

@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.js",
-    "./adapters/leaflet": "./src/adapters/leaflet.js"
+    "./adapters/leaflet": "./src/adapters/leaflet.js",
+    "./fallback": "./src/fallback/canvasPainter.js"
   },
   "files": [
     "src",

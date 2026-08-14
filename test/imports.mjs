@@ -9,6 +9,7 @@
 
 import * as pkg from 'ProgressionDisplayWebGL'
 import * as leafletAdapter from 'ProgressionDisplayWebGL/adapters/leaflet'
+import * as fallback from 'ProgressionDisplayWebGL/fallback'
 
 let passed = 0
 let failed = 0
@@ -25,6 +26,7 @@ const fns = [
   'rampLutBytes', 'lutFromBands', 'lutFor', 'timeOrder',
   'bandsRampCss', 'rgbCss', 'bandCss', 'rampCss',
   'windowFromJson', 'boundsFromJson', 'styleFromJson', 'rasterFromImage', 'acresFromJson',
+  'paintProgression',
 ]
 for (const name of fns) {
   check(`exports function ${name}`, typeof pkg[name] === 'function', typeof pkg[name])
@@ -57,6 +59,11 @@ check('subpath exports createProgressionLayer',
   typeof leafletAdapter.createProgressionLayer === 'function')
 check('adapter imported without a Leaflet global present (late binding holds)',
   typeof globalThis.L === 'undefined')
+
+console.log('\npackage exports — "./fallback" subpath')
+
+check('subpath resolves and exports paintProgression',
+  typeof fallback.paintProgression === 'function')
 
 /* ================================================================= result */
 console.log(`\n${failed === 0 ? 'PASS' : 'FAIL'} — ${passed} passed, ${failed} failed\n`)
