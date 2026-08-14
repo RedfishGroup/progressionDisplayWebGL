@@ -1,7 +1,21 @@
 {
-"name": "ProgressionDisplayWebGL",
-"version": "0.0.1",
- "repository": {
+  "name": "ProgressionDisplayWebGL",
+  "version": "1.0.0",
+  "description": "WebGL renderer for incident progression (time-of-arrival) rasters, with format helpers and map-framework adapters",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./adapters/leaflet": "./src/adapters/leaflet.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node test/run.mjs"
+  },
+  "repository": {
     "type": "git",
     "url": "git@github.com:RedfishGroup/progressionDisplayWebGL.git"
   }
