@@ -1,57 +1,204 @@
-
-
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Progression Test</title>
-  <script type="module">
-
-    import staticProgression from "./legacy/progressionStatic.js"
-    import {loadProgressionJSON, loadProgressionImage} from "./legacy/misc.js"
-
-    function setup(urlParams) {
-      return new Promise(function(resolve, reject){
-        console.log("SETUP CALLED", urlParams)
-        // default progression
-        var jsonFile = "https://s3.amazonaws.com/fire-progressions/outputYarnell2/AZ-A1S-HL96.json"
-        var pngFile = "https://s3.amazonaws.com/fire-progressions/outputYarnell2/AZ-A1S-HL96.png"
-        var proms = [loadProgressionImage(pngFile), loadProgressionJSON(jsonFile)]
-        Promise.all(proms).then(function(ev){
-          console.log('done loading',ev)
-          var div = document.getElementById('staticDiv')
-          var can1 = document.createElement('canvas')
-          div.appendChild(can1)
-          window.layer = new staticProgression(can1,{width:500, height:600})
-          layer.setProgressionImage(ev[0])
-          var jsn = ev[1]
-          layer.setProgressionJson(jsn)
-          layer.time = layer.startTime()// ev.json.startTime
-          resolve()
-        }).catch(reject)
-      })
-    }
-
-    function tick() {
-      layer.time += 1000000//layer.metaData.UTC[Math.floor(Math.random()*layer.metaData.UTC.length)]
-      if(layer.time > layer.endTime() + 100000000){
-        layer.time = layer.startTime()
-      }
-      layer.draw()
-      requestAnimationFrame( tick)
-    }
-
-
-    setup().then(() => tick())
-
-
-  </script>
-
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ProgressionDisplayWebGL demo</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { margin: 1.5rem auto; max-width: 780px; padding: 0 1rem; }
+    h1 { font-size: 1.2rem; }
+    #stage { position: relative; width: 720px; max-width: 100%; height: 480px;
+             background: #20242a; border-radius: 6px; overflow: hidden; }
+    #view { position: absolute; inset: 0; width: 100%; height: 100%; }
+    #controls { display: flex; flex-wrap: wrap; gap: .6rem .9rem; align-items: center;
+                margin-top: .8rem; }
+    #scrub { flex: 1 1 220px; }
+    #readouts { display: flex; gap: 1.2rem; margin-top: .5rem; font-variant-numeric: tabular-nums;
+                font-size: .9rem; opacity: .85; }
+    .badge { padding: .1rem .5rem; border-radius: 999px; font-size: .75rem;
+             background: #b45309; color: white; display: none; }
+    select, button { font: inherit; }
+    p.hint { font-size: .85rem; opacity: .7; }
+    code { font-size: .85em; }
+  </style>
 </head>
 <body>
+  <h1>ProgressionDisplayWebGL — sample progression</h1>
+  <p class="hint">
+    Serve this directory over HTTP (e.g. <code>npx serve</code> or
+    <code>python3 -m http.server</code>) — module scripts and fetch do not run
+    from <code>file://</code>. The burn scar's narrow finger points
+    <strong>north</strong>; if it points down, the orientation rule is broken
+    (README “Raster orientation”). URL switches: <code>?fallback=1</code>
+    forces the CPU painter, <code>?gradient=1</code> loads the
+    published-gradient variant, <code>?t=0.75</code> opens paused at a scrub
+    position, <code>?end=perimeter</code> preselects an end-frame style.
+  </p>
 
-<div id="staticDiv"></div>
-<br>
-<div id="mapDiv2" style="width:400px; height:400px"></div>
+  <div id="stage"><canvas id="view"></canvas></div>
 
+  <div id="controls">
+    <button id="play">Pause</button>
+    <input id="scrub" type="range" min="0" max="1000" value="0" />
+    <label>Scheme <select id="scheme"></select></label>
+    <label>Mode <select id="mode"></select></label>
+    <label>End frame <select id="end"></select></label>
+    <span id="fbBadge" class="badge">CPU fallback (Smooth look)</span>
+  </div>
+  <div id="readouts">
+    <span id="clock"></span>
+    <span id="acres"></span>
+    <span id="uploads"></span>
+  </div>
+
+  <script type="module">
+    import {
+      ProgressionRenderer, RendererUnavailable,
+      rasterFromImage, windowFromJson, styleFromJson, boundsFromJson, acresFromJson,
+      paintProgression, endFrameLut, lutFor,
+      SCHEMES, MODES, END_FRAME_STYLES, MODE_SMOOTH,
+    } from './src/index.js'
+    import { fetchProgression } from './src/loaders/fetchProgression.js'
+    import { projectionMatrixFromViewportCorners } from './src/adapters/matrix.js'
+
+    const params = new URLSearchParams(location.search)
+    const base = params.has('gradient') ? './sample/sample-gradient' : './sample/sample'
+    const { json, image } = await fetchProgression(base)
+    const raster = rasterFromImage(image)
+    const win = windowFromJson(json)
+    const bounds = boundsFromJson(json)
+
+    /* ---------------- placement: letterbox the bounds into the stage ----- */
+    const stage = document.getElementById('stage')
+    const canvas = document.getElementById('view')
+    const cssW = stage.clientWidth
+    const cssH = stage.clientHeight
+    const dpr = window.devicePixelRatio || 1
+    const latMid = (bounds.north + bounds.south) / 2
+    const aspect = ((bounds.east - bounds.west) * Math.cos(latMid * Math.PI / 180)) /
+                   (bounds.north - bounds.south)
+    let rectW = cssW * 0.92
+    let rectH = rectW / aspect
+    if (rectH > cssH * 0.92) { rectH = cssH * 0.92; rectW = rectH * aspect }
+    const ul = { x: (cssW - rectW) / 2, y: (cssH - rectH) / 2 }              // north-west
+    const lr = { x: ul.x + rectW, y: ul.y + rectH }                          // south-east
+    const matrix = projectionMatrixFromViewportCorners(ul, lr, cssW, cssH)
+
+    /* ---------------- style state (stable references — see setStyle) ----- */
+    const schemeSel = document.getElementById('scheme')
+    const modeSel = document.getElementById('mode')
+    const endSel = document.getElementById('end')
+    schemeSel.append(new Option('from JSON', 'json'))
+    SCHEMES.forEach((s, i) => schemeSel.append(new Option(s.label, i)))
+    MODES.forEach((m, i) => modeSel.append(new Option(m.label, i)))
+    END_FRAME_STYLES.forEach((s) => endSel.append(new Option(s.label, s.key)))
+
+    const styleCache = new Map()
+    function currentStyle() {
+      const mode = Number(modeSel.value)
+      const endStyle = endSel.value
+      if (schemeSel.value === 'json') return styleFromJson(json, mode, { endStyle })
+      const key = `${schemeSel.value}|${mode}|${endStyle}`   // stable lut refs
+      if (!styleCache.has(key)) {
+        const s = SCHEMES[Number(schemeSel.value)]
+        styleCache.set(key, {
+          mode, endStyle, lut: lutFor(s, mode), bands: s.bands,
+          isGradient: s.publishesGradient,
+        })
+      }
+      return styleCache.get(key)
+    }
+
+    /* ---------------- GL path, with automatic CPU fallback --------------- */
+    let renderer = null
+    let ctx2d = null
+    let rasterCanvas = null
+    const fbBadge = document.getElementById('fbBadge')
+
+    if (!params.has('fallback')) {
+      try {
+        renderer = new ProgressionRenderer(canvas)
+        renderer.setRaster(raster).setWindow(win).setEndLut(endFrameLut())
+        renderer.setViewport(cssW, cssH, dpr)
+        renderer.setProjection(matrix)
+      } catch (err) {
+        if (!(err instanceof RendererUnavailable)) throw err
+        console.warn('GL unavailable, using the fallback painter:', err.message)
+      }
+    }
+    if (!renderer) {
+      fbBadge.style.display = 'inline'
+      canvas.width = Math.round(cssW * dpr)
+      canvas.height = Math.round(cssH * dpr)
+      ctx2d = canvas.getContext('2d')
+      ctx2d.scale(dpr, dpr)
+      ctx2d.imageSmoothingEnabled = false
+      rasterCanvas = document.createElement('canvas')
+      rasterCanvas.width = raster.width
+      rasterCanvas.height = raster.height
+    }
+
+    /* ---------------- clock, scrub, readouts ----------------------------- */
+    const playBtn = document.getElementById('play')
+    const scrub = document.getElementById('scrub')
+    const clockEl = document.getElementById('clock')
+    const acresEl = document.getElementById('acres')
+    const uploadsEl = document.getElementById('uploads')
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: json.timezone, month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    })
+
+    const SWEEP_MS = 9000        // full run in ~9 s of wall clock
+    const HOLD_MS = 2200         // hold the end frame before looping
+    let playing = true
+    let frac = 0                 // 0..1 through the run
+    let last = performance.now()
+
+    // Deterministic deep links (also used by headless screenshots/tests)
+    if (params.has('end') && END_FRAME_STYLES.some((s) => s.key === params.get('end'))) {
+      endSel.value = params.get('end')
+    }
+    if (params.has('t')) {
+      frac = Math.min(1, Math.max(0, parseFloat(params.get('t')) || 0))
+      playing = false
+      playBtn.textContent = 'Play'
+      scrub.value = Math.round(frac * 1000)
+    }
+
+    function draw(timeMs) {
+      if (renderer) {
+        renderer.setTime(timeMs).setStyle(currentStyle()).draw()
+        uploadsEl.textContent = `texture uploads: ${renderer.uploads}`
+      } else {
+        const s = currentStyle()
+        const img = paintProgression(raster, win, timeMs, s.lut,
+          { endStyle: s.endStyle, bands: s.bands })
+        rasterCanvas.getContext('2d').putImageData(img, 0, 0)
+        ctx2d.clearRect(0, 0, cssW, cssH)
+        ctx2d.drawImage(rasterCanvas, ul.x, ul.y, rectW, rectH)
+      }
+      clockEl.textContent = fmt.format(timeMs)
+      const a = acresFromJson(json, timeMs)
+      acresEl.textContent = a === null ? '' : `≈ ${Math.round(a).toLocaleString()} acres`
+    }
+
+    function tick(now) {
+      if (playing) {
+        frac += (now - last) / SWEEP_MS
+        if (frac >= 1 + HOLD_MS / SWEEP_MS) frac = 0          // hold, then loop
+        scrub.value = Math.round(Math.min(frac, 1) * 1000)
+      }
+      last = now
+      draw(win.startMs + Math.min(frac, 1) * (win.endMs - win.startMs))
+      requestAnimationFrame(tick)
+    }
+
+    playBtn.onclick = () => { playing = !playing; playBtn.textContent = playing ? 'Pause' : 'Play' }
+    scrub.oninput = () => { playing = false; playBtn.textContent = 'Play'; frac = scrub.value / 1000 }
+
+    requestAnimationFrame(tick)
+  </script>
 </body>
 </html>

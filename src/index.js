@@ -25,6 +25,7 @@ export {
 } from './shaders.js'
 
 export { paintProgression } from './fallback/canvasPainter.js'
+export { fetchProgression } from './loaders/fetchProgression.js'
 
 export { windowFromJson } from './format/window.js'
 export { boundsFromJson } from './format/bounds.js'
