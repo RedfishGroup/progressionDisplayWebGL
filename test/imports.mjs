@@ -24,6 +24,7 @@ const fns = [
   'recencyFadeSeconds', 'endFrameLut', 'isFinalFrame',
   'rampLutBytes', 'lutFromBands', 'lutFor', 'timeOrder',
   'bandsRampCss', 'rgbCss', 'bandCss', 'rampCss',
+  'windowFromJson', 'boundsFromJson', 'styleFromJson', 'rasterFromImage', 'acresFromJson',
 ]
 for (const name of fns) {
   check(`exports function ${name}`, typeof pkg[name] === 'function', typeof pkg[name])

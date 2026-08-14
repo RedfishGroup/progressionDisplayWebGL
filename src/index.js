@@ -24,6 +24,12 @@ export {
   QUAD,
 } from './shaders.js'
 
+export { windowFromJson } from './format/window.js'
+export { boundsFromJson } from './format/bounds.js'
+export { styleFromJson } from './format/style.js'
+export { rasterFromImage } from './format/raster.js'
+export { acresFromJson } from './format/acres.js'
+
 export {
   SCHEMES,
   MODES,
