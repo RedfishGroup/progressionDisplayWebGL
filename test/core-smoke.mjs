@@ -17,7 +17,7 @@ import { SCHEMES, LEGACY_GRADIENTS, rampLutBytes, lutFromBands, lutFor, timeOrde
 import { projectionMatrix } from '../src/adapters/leaflet.js'
 import {
   fragmentShader, vertexShader, recencyFadeSeconds, LEGACY_FADE_S, FADE_SPAN_FRACTION,
-  QUAD, MODE_SMOOTH, MODE_BANDS, MODE_RECENCY
+  QUAD, MODE_SMOOTH, MODE_BANDS, MODE_RECENCY, UNIFORM_NAMES
 } from '../src/shaders.js'
 
 let passed = 0
@@ -255,6 +255,19 @@ check('mode constants are 0/1/2',
 check('the y-flip convention is documented in the source',
   /Y-FLIP CONVENTION/.test(fragmentShader) || /v = 0/.test(fragmentShader) ||
   /texcoord/i.test(fragmentShader))
+
+/* ---- the selectable end frame (the one post-lift GLSL feature) ---- */
+check('the end frame branches on endStyleMode',
+  /uniform int endStyleMode/.test(fragmentShader) && /endStyleMode == 1/.test(fragmentShader))
+check('endStyleMode rides UNIFORM_NAMES so the renderer caches its location',
+  UNIFORM_NAMES.includes('endStyleMode'))
+{
+  const atEndBlock = fragmentShader.slice(
+    fragmentShader.indexOf('if (atEnd)'), fragmentShader.indexOf('if (mode == 0)'))
+  check('the perimeter border keys on no-data adjacency, not arrival ordering',
+    /isDataEdge/.test(atEndBlock) && !/isFireBorder/.test(atEndBlock))
+  check('the jet branch still reads the end LUT', /endColor\(uArr\)/.test(atEndBlock))
+}
 
 /* ---- the quad: v = 0 must sit at the TOP (y = +1) ---- */
 {

@@ -105,6 +105,18 @@ export function isFinalFrame(elapsedS, spanS) {
   return elapsedS >= spanS - 1 || spanS <= 0
 }
 
+/**
+ * End-frame styles — the `endStyleMode` uniform's values, for host UIs and
+ * legends to enumerate. 'jet' is the default (the end-LUT arrival map);
+ * 'perimeter' is the quieter completion state added at the core rebuild:
+ * the selected ramp's interior colour over the whole burn with an opaque
+ * border of the same colour at the final data edge.
+ */
+export const END_FRAME_STYLES = [
+  { key: 'jet', label: 'Arrival map', sub: 'end-LUT ramp' },
+  { key: 'perimeter', label: 'Final perimeter', sub: 'interior colour, opaque edge' }
+]
+
 /** Render modes — the `mode` uniform's values (spec §3.5). */
 export const MODES = [
   { key: 'smooth', label: 'Smooth', sub: 'arrival ramp' },

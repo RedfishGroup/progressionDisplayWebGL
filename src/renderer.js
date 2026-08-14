@@ -164,7 +164,8 @@ export class ProgressionRenderer {
 
   /**
    * The final-frame ramp (Jet). Constant for the life of the renderer, so it
-   * uploads once rather than riding setStyle.
+   * uploads once rather than riding setStyle. Only the 'jet' end style reads
+   * it — a host using endStyle 'perimeter' never needs to call this.
    * @param {Uint8Array} lut - 256×4 RGBA, time order
    */
   setEndLut(lut) {
@@ -177,7 +178,11 @@ export class ProgressionRenderer {
 
   /**
    * @param {{mode: number, lut: Uint8Array, bands: number[][],
-   *          isGradient: boolean, isWater?: boolean}} s
+   *          isGradient: boolean, isWater?: boolean,
+   *          endStyle?: 'jet'|'perimeter'}} s - endStyle defaults to 'jet'
+   *          (the end-LUT arrival map); 'perimeter' draws the interior slot
+   *          colour with an opaque border at the final data edge and needs
+   *          no end LUT.
    */
   setStyle(s) {
     const gl = this.gl
@@ -230,6 +235,7 @@ export class ProgressionRenderer {
     gl.uniform1f(this._u.lastTime, spanS)
     gl.uniform1f(this._u.recencyFadeS, recencyFadeSeconds(spanS))
     gl.uniform1i(this._u.mode, s.mode)
+    gl.uniform1i(this._u.endStyleMode, s.endStyle === 'perimeter' ? 1 : 0)
     gl.uniform1i(this._u.isGradient, s.isGradient ? 1 : 0)
     gl.uniform1i(this._u.isWater, s.isWater ? 1 : 0)
     gl.uniform4fv(this._u.gradientColor1, s.bands[0])

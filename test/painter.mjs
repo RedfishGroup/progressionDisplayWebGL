@@ -85,6 +85,61 @@ console.log('\ncanvasPainter — final frame (t = end)')
     eq(rgba(img, 9), lutRgb(END, 254)))
 }
 
+console.log('\ncanvasPainter — perimeter end style')
+{
+  /* 100×100 so the texture-fraction edge offset (1.5·0.005·100 = 0.75) lands
+   * on the 1-px neighbors (floor(x+0.5±0.75) = x±1). White frame, burned
+   * block in [10,90) with arrival-sec = column x; span 255 s as above. */
+  const W2 = 100
+  const mk = (mutate) => {
+    const b = new Uint8ClampedArray(W2 * W2 * 4).fill(255)   // all white no-data
+    for (let y = 10; y < 90; y++) {
+      for (let x = 10; x < 90; x++) {
+        const i = (y * W2 + x) * 4
+        b[i] = 0; b[i + 1] = 0; b[i + 2] = x; b[i + 3] = 255  // sec = x (< 256)
+      }
+    }
+    if (mutate) mutate(b)
+    return { bytes: b, width: W2, height: W2 }
+  }
+  const at = (img, x, y) => rgba(img, y * W2 + x)
+  const BANDS = SCHEMES[0].bands
+  const INTERIOR = [51, 26, 0]                    // bands[3] rgb ×255, rounded
+  const A_INT = Math.round(BANDS[3][3] * 255)     // 0.7 → 179
+  const opts = { endStyle: 'perimeter', bands: BANDS }
+
+  const img = paintProgression(mk(), WINDOW, WINDOW.endMs, LUT, opts)
+  check('the burn fills with the interior slot colour at its own alpha',
+    eq(at(img, 50, 50), [...INTERIOR, A_INT]), at(img, 50, 50).join())
+  check('the final data edge is the same colour, opaque',
+    eq(at(img, 10, 50), [...INTERIOR, 255]) && eq(at(img, 50, 89), [...INTERIOR, 255]))
+  check('no-data stays transparent', eq(at(img, 5, 50), CLEAR))
+  check('one flat mass — interior carries no arrival gradient',
+    eq(at(img, 20, 50), at(img, 70, 50)))
+
+  const hole = paintProgression(mk((b) => { b.fill(255, (50 * W2 + 50) * 4, (50 * W2 + 50) * 4 + 4) }),
+    WINDOW, WINDOW.endMs, LUT, opts)
+  check('an interior no-data hole grows an opaque edge around it',
+    eq(at(hole, 49, 50), [...INTERIOR, 255]) && eq(at(hole, 50, 50), CLEAR))
+
+  // The semantic the shader must share: the border keys on NO-DATA adjacency.
+  // A last-arriving pixel (arrival == span, diff == 0 at the final frame)
+  // must NOT smear a border around itself.
+  const late = paintProgression(mk((b) => { b[(50 * W2 + 70) * 4 + 2] = 255; b[(50 * W2 + 70) * 4 + 1] = 0 }),
+    WINDOW, WINDOW.endMs, LUT, opts)
+  check('a last-arriving pixel draws (inclusive gate) without smearing a border',
+    eq(at(late, 70, 50), [...INTERIOR, A_INT]) && eq(at(late, 69, 50), [...INTERIOR, A_INT]))
+
+  const jet = paintProgression(mk(), WINDOW, WINDOW.endMs, LUT)
+  check('without opts the final frame stays the jet arrival map',
+    eq(at(jet, 50, 50), lutRgb(END, 50)))
+  check('perimeter before the end frame is just the normal look (style only gates atEnd)',
+    eq(rgba(paintProgression(raster, WINDOW, START + 100 * 1000, LUT, opts), 5), lutRgb(LUT, 100)))
+  check('perimeter without bands throws a descriptive error',
+    (() => { try { paintProgression(mk(), WINDOW, WINDOW.endMs, LUT, { endStyle: 'perimeter' }); return false }
+      catch (e) { return /bands/.test(e.message) } })())
+}
+
 console.log('\ncanvasPainter — edges')
 {
   const before = paintProgression(raster, WINDOW, START - 1000, LUT)

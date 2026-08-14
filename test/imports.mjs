@@ -47,6 +47,9 @@ check('exports the 5-scheme table',
 check('exports MODES and LEGACY_GRADIENTS and END_FRAME_SCHEME',
   Array.isArray(pkg.MODES) && typeof pkg.LEGACY_GRADIENTS === 'object' &&
   typeof pkg.END_FRAME_SCHEME === 'object')
+check('exports END_FRAME_STYLES with the jet and perimeter keys',
+  Array.isArray(pkg.END_FRAME_STYLES) &&
+  pkg.END_FRAME_STYLES.map((s) => s.key).join() === 'jet,perimeter')
 check('RendererUnavailable is an Error subclass',
   Object.getPrototypeOf(pkg.RendererUnavailable) === Error ||
   pkg.RendererUnavailable.prototype instanceof Error)

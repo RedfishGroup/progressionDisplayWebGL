@@ -37,6 +37,7 @@ export {
   MODES,
   LEGACY_GRADIENTS,
   END_FRAME_SCHEME,
+  END_FRAME_STYLES,
   endFrameLut,
   isFinalFrame,
   rampLutBytes,

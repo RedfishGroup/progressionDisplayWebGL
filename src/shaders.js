@@ -84,6 +84,7 @@ uniform float timeSeconds;      // elapsed since start -- plain seconds
 uniform float lastTime;         // total span -- plain seconds
 uniform float recencyFadeS;     // Recency fade window (D16)
 uniform int mode;               // 0 Smooth . 1 Bands . 2 Recency
+uniform int endStyleMode;       // final frame: 0 end-LUT arrival map . 1 perimeter
 
 uniform bool isGradient;
 uniform vec4 gradientColor1;    // outermost ring
@@ -140,6 +141,20 @@ int isFireBorder(float percentWide) {
   return 0;
 }
 
+// Edge test for the perimeter end style: the fire's FINAL edge is where
+// burned data meets NO-DATA. Same texture-fraction geometry as the rings
+// (D15), but keyed on no-data adjacency rather than isFireBorder's
+// diff <= 0.0 arrival test — at the exact final time the last-arriving
+// pixels sit at diff == 0, and the arrival test would smear a border ring
+// inward around them.
+bool isDataEdge(float percentWide) {
+  float dd = percentWide * 0.005;
+  return noData(texture2D(u_image, v_texCoord + dd * vec2(0.0,  1.0)))
+      || noData(texture2D(u_image, v_texCoord + dd * vec2(0.0, -1.0)))
+      || noData(texture2D(u_image, v_texCoord + dd * vec2(-1.0, 0.0)))
+      || noData(texture2D(u_image, v_texCoord + dd * vec2( 1.0, 0.0)));
+}
+
 void main() {
   gl_FragColor = vec4(0.0);
 
@@ -161,11 +176,20 @@ void main() {
 
   // THE FINAL FRAME IS SHARED. Once the fire is over, recency has nothing
   // left to say and band rings only restate the last perimeter, so all three
-  // looks converge on one arrival-time map in the Jet ramp. This replaces the
-  // shipped HSV sweep, whose hue wrapped (…red -> blue -> cyan again) so two
-  // very different times could land on the same colour.
+  // looks converge on one completion state. This replaces the shipped HSV
+  // sweep, whose hue wrapped (…red -> blue -> cyan again) so two very
+  // different times could land on the same colour. TWO styles, host-chosen:
+  //   0 (jet)       — the arrival-time map through the end LUT
+  //   1 (perimeter) — the quieter option: the interior slot colour over the
+  //                   whole burn, opaque at the final data edge, so the run
+  //                   settles into one muted mass with a crisp outline
   if (atEnd) {
-    gl_FragColor = vec4(endColor(uArr), 1.0);
+    if (endStyleMode == 1) {
+      float a = isDataEdge(1.5) ? 1.0 : gradientColor4.a;
+      gl_FragColor = vec4(gradientColor4.rgb, a);
+    } else {
+      gl_FragColor = vec4(endColor(uArr), 1.0);
+    }
     return;
   }
 
@@ -201,7 +225,7 @@ void main() {
 /** Every uniform the program declares — the renderer caches locations from this. */
 export const UNIFORM_NAMES = [
   'u_image', 'u_lut', 'u_endLut', 'projection',
-  'timeSeconds', 'lastTime', 'recencyFadeS', 'mode',
+  'timeSeconds', 'lastTime', 'recencyFadeS', 'mode', 'endStyleMode',
   'isGradient', 'gradientColor1', 'gradientColor2', 'gradientColor3', 'gradientColor4',
   'isWater'
 ]
