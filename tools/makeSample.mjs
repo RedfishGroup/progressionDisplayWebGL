@@ -2,6 +2,9 @@
  * Generates the offline sample progression the demo ships with:
  *   sample/sample.png            the arrival raster (base-256 seconds, white
  *                                = no data, row 0 = north)
+ *   sample/sample-tagged.png     the same raster with a non-sRGB color tag —
+ *                                the decode-exactness regression asset (see
+ *                                "the color-tagged twin" below)
  *   sample/sample.json           metadata: bounds, UTC, acres, explicit
  *                                startTime/endTime AND UTC (both window-
  *                                contract branches exercisable)
@@ -125,7 +128,80 @@ function encodePng(bytes, w, h) {
   ])
 }
 
-writeFileSync(join(OUT, 'sample.png'), encodePng(rgba, W, H))
+const png = encodePng(rgba, W, H)
+writeFileSync(join(OUT, 'sample.png'), png)
+
+/* ============================== the color-tagged twin (regression asset) */
+
+// sample-tagged.png is sample.png with iCCP + gAMA chunks inserted after
+// IHDR — identical IDAT, so the two must decode to identical bytes.
+// Published TOA PNGs are inconsistently color-tagged, and a color-managed
+// decode silently corrupts arrival times (Firefox converts tagged PNGs to
+// the display profile by default; a ±1 red shift is an 18-hour error).
+// The tag is deliberately NON-sRGB (a gamma-1.8 matrix/TRC profile): an
+// sRGB tag only corrupts when the display profile differs from sRGB, but
+// this one shifts bytes under ANY color-managing decode, in every browser,
+// on every display — so test/browser.html's equality check fails
+// deterministically wherever the loader regresses.
+
+// A minimal ICC v2 monitor profile: sRGB primaries (D50-adapted), gamma-1.8
+// tone curves. Small enough to synthesize; accepted by Firefox's qcms and
+// Chrome (verified against both when this asset was introduced).
+function gamma18Profile() {
+  const s15f16 = (x) => be32(Math.round(x * 65536))
+  const xyz = (x, y, z) =>
+    Buffer.concat([Buffer.from('XYZ \0\0\0\0', 'ascii'), s15f16(x), s15f16(y), s15f16(z)])
+  const curv = Buffer.concat([
+    Buffer.from('curv\0\0\0\0', 'ascii'), be32(1),
+    Buffer.from([0x01, 0xcd]),                       // u8.8 gamma ≈ 1.8
+  ])
+  const ascii = Buffer.from('progression test gamma 1.8\0', 'ascii')
+  const desc = Buffer.concat([
+    Buffer.from('desc\0\0\0\0', 'ascii'), be32(ascii.length), ascii,
+    Buffer.alloc(78),                                // unicode + scriptcode stubs
+  ])
+  const tags = [
+    ['desc', desc],
+    ['wtpt', xyz(0.9642, 1.0, 0.8249)],              // D50
+    ['rXYZ', xyz(0.4360747, 0.2225045, 0.0139322)],
+    ['gXYZ', xyz(0.3850649, 0.7168786, 0.0971045)],
+    ['bXYZ', xyz(0.1430804, 0.0606169, 0.7141733)],
+    ['rTRC', curv], ['gTRC', curv], ['bTRC', curv],
+  ]
+  const table = [be32(tags.length)]
+  const body = []
+  let off = 128 + 4 + 12 * tags.length
+  for (const [sig, data] of tags) {
+    const padded = data.length % 4
+      ? Buffer.concat([data, Buffer.alloc(4 - (data.length % 4))]) : data
+    table.push(Buffer.from(sig, 'ascii'), be32(off), be32(data.length))
+    body.push(padded)
+    off += padded.length
+  }
+  const tableBuf = Buffer.concat(table)
+  const bodyBuf = Buffer.concat(body)
+  const header = Buffer.concat([
+    be32(128 + tableBuf.length + bodyBuf.length),    // profile size
+    Buffer.alloc(4), be32(0x02200000),               // cmm, version 2.2
+    Buffer.from('mntrRGB XYZ ', 'ascii'),
+    Buffer.from([0x07, 0xea, 0, 8, 0, 28, 0, 0, 0, 0, 0, 0]),  // fixed date — deterministic
+    Buffer.from('acsp', 'ascii'),
+    Buffer.alloc(24),                                // platform…attributes
+    Buffer.alloc(4),                                 // rendering intent
+    s15f16(0.9642), s15f16(1.0), s15f16(0.8249),     // illuminant D50
+    Buffer.alloc(4), Buffer.alloc(44),               // creator, reserved
+  ])
+  return Buffer.concat([header, tableBuf, bodyBuf])
+}
+
+const IHDR_END = 8 + 12 + 13                         // signature + IHDR chunk
+const tagged = Buffer.concat([
+  png.subarray(0, IHDR_END),
+  chunk('iCCP', Buffer.concat([Buffer.from('g18\0\0', 'ascii'), deflateSync(gamma18Profile())])),
+  chunk('gAMA', be32(55556)),                        // 1/1.8 — matches the profile
+  png.subarray(IHDR_END),
+])
+writeFileSync(join(OUT, 'sample-tagged.png'), tagged)
 
 /* ============================================================ the JSONs */
 
@@ -193,5 +269,23 @@ writeFileSync(join(OUT, 'sample-gradient.json'),
   ok('outside the scar is white', probe(2, 2).join() === '255,255,255,255')
   ok('the north finger burns in row 10 (row 0 = north)', decode(probe(CX, 10)) > 0 && probe(CX, 10)[0] < 255)
   ok('acres are monotonic and end past 10k', acres.every((a, i) => i === 0 || a >= acres[i - 1]) && acres[N_PERIMS - 1] > 10000)
-  console.log(`\nwrote sample/sample.png (${png.length} bytes), sample.json, sample-gradient.json`)
+
+  // The tagged twin: only the color chunks may differ from sample.png.
+  const taggedFile = readFileSync(join(OUT, 'sample-tagged.png'))
+  const chunksOf = (buf) => {
+    const out = []
+    for (let o = 8; o < buf.length; ) {
+      const len = buf.readUInt32BE(o)
+      out.push({ type: buf.toString('ascii', o + 4, o + 8), data: buf.subarray(o + 8, o + 8 + len) })
+      o += 12 + len
+    }
+    return out
+  }
+  ok('tagged twin carries iCCP + gAMA between IHDR and IDAT',
+    chunksOf(taggedFile).map((c) => c.type).join() === 'IHDR,iCCP,gAMA,IDAT,IEND')
+  ok('tagged twin pixel data is byte-identical to sample.png',
+    chunksOf(taggedFile).find((c) => c.type === 'IDAT').data
+      .equals(chunksOf(readFileSync(join(OUT, 'sample.png'))).find((c) => c.type === 'IDAT').data))
+
+  console.log(`\nwrote sample/sample.png (${png.length} bytes), sample-tagged.png (${taggedFile.length} bytes), sample.json, sample-gradient.json`)
 }

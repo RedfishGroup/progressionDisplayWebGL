@@ -42,15 +42,15 @@ The renderer is deliberately blind to everything app-shaped. A host provides:
 
 ```js
 import {
-  ProgressionRenderer, rasterFromImage, windowFromJson, styleFromJson,
-  endFrameLut, MODE_SMOOTH,
+  ProgressionRenderer, fetchProgression, rasterFromImage, windowFromJson,
+  styleFromJson, endFrameLut, MODE_SMOOTH,
 } from 'ProgressionDisplayWebGL'
 
-const json = await (await fetch(base + '.json')).json()
-const img = new Image()
-img.crossOrigin = 'anonymous'          // the PNG bytes must survive untouched
-img.src = base + '.png'
-await img.decode()
+// fetchProgression decodes the PNG with color management off
+// (colorSpaceConversion:'none') — the PNG bytes must survive untouched, and
+// a bare Image decode lets Firefox color-manage tagged PNGs, silently
+// corrupting the arrival times. Don't hand-roll this load.
+const { json, image: img } = await fetchProgression(base)
 
 const r = new ProgressionRenderer(canvas)   // may throw RendererUnavailable
 r.setRaster(rasterFromImage(img))           // uploads once; scrubbing never re-uploads

@@ -11,10 +11,17 @@
  * go out in the same row order getImageData returns. The y-flip belongs to
  * the renderer's texture coordinates, nowhere else.
  *
- * The 2D-canvas route also sidesteps GL-side color management: the encoded
- * time bytes must arrive untouched, so the image must be same-origin or
- * loaded with crossOrigin='anonymous' over CORS (a tainted canvas throws
- * here, with a message saying exactly that).
+ * COLOR EXACTNESS: the bytes here are only as exact as the decode that
+ * produced `img` — color management happens upstream, at image decode
+ * (Firefox converts color-tagged PNGs to the display profile by default).
+ * Use fetchProgression, which decodes with colorSpaceConversion:'none'.
+ * This function pins its own canvas to sRGB so a wide-gamut display default
+ * cannot re-convert on the way back out; GL-side conversion never applies
+ * because setRaster uploads raw bytes, not an image element.
+ *
+ * `img` is an ImageBitmap (fetchProgression's normal result) or an
+ * HTMLImageElement, which must be same-origin or CORS-clean (a tainted
+ * canvas throws here, with a message saying exactly that).
  */
 
 export function rasterFromImage(img) {
@@ -26,7 +33,7 @@ export function rasterFromImage(img) {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  const ctx = canvas.getContext('2d', { willReadFrequently: true, colorSpace: 'srgb' })
   ctx.drawImage(img, 0, 0)
   let imageData
   try {

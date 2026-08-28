@@ -17,9 +17,10 @@
   <script type="module">
     /**
      * The package's GL acceptance page (the gl-goldens.html analogue):
-     * GPU-vs-painter pixel parity on the committed sample raster, the
-     * single-upload scrub invariant, RendererUnavailable on an oversized
-     * raster, and both end-frame styles. Serve the repo root over HTTP and
+     * byte-exact decode of a color-tagged PNG, GPU-vs-painter pixel parity
+     * on the committed sample raster, the single-upload scrub invariant,
+     * RendererUnavailable on an oversized raster, and both end-frame
+     * styles. Serve the repo root over HTTP and
      * open /test/browser.html; the banner and document.title carry the
      * verdict (headless runs grep the DOM for it).
      */
@@ -45,6 +46,31 @@
       const raster = rasterFromImage(image)
       const win = windowFromJson(json)
       const { width: W, height: H } = raster
+
+      /* ---- 0. Byte-exact decode of a color-tagged PNG ---- */
+      // sample-tagged.png is sample.png plus a non-sRGB iCCP+gAMA tag (see
+      // tools/makeSample.mjs "the color-tagged twin"): a color-managed
+      // decode shifts its bytes in ANY browser on ANY display, so equality
+      // here proves the loader decodes untouched — the regression check for
+      // the Firefox arrival-time corruption of tagged published PNGs.
+      {
+        const tagged = await fetchProgression({
+          jsonUrl: '../sample/sample.json',
+          pngUrl: '../sample/sample-tagged.png',
+        })
+        const t = rasterFromImage(tagged.image)
+        let firstOff = -1
+        if (t.width === W && t.height === H) {
+          for (let i = 0; i < t.bytes.length; i++) {
+            if (t.bytes[i] !== raster.bytes[i]) { firstOff = i; break }
+          }
+        }
+        check('a color-tagged PNG decodes byte-identical to the untagged raster',
+          t.width === W && t.height === H && firstOff === -1,
+          t.width !== W || t.height !== H
+            ? `decoded ${t.width}×${t.height}, expected ${W}×${H}`
+            : `first mismatch at byte ${firstOff}: ${t.bytes[firstOff]} vs ${raster.bytes[firstOff]} — color management reached the decode`)
+      }
 
       /* ---- GL renderer at raster resolution, identity placement ---- */
       const canvas = document.getElementById('gl')
